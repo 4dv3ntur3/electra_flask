@@ -1,0 +1,26 @@
+<!-- 사용자 입력 페이지 -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Flask input get</title>
+</head>
+<body>    
+    <br>
+    <h1 align="center">Neural Sytle Transfer</h1>
+    <br>
+    <form align="center" action="/nst_post" method="POST" enctype="multipart/form-data">
+        
+        <br><br>
+        <h2 align="center">Target Text</h2>
+        <div align="center" id='view_area'></div>
+        <br>
+        <input type="file" name="input_txt" id="input_txt" value="inputTxt" /> <!-- onchange="previewImage(this,'view_area')"-->
+        <input type="submit" value="확인"/>
+    </form>
+    <br><br><br>
+ 
+</body>
+</html>
