@@ -11,6 +11,7 @@ from transformers import AutoModelForTokenClassification
 from flask_deep.utils import init_logger, load_tokenizer
 
 import glob
+import json 
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +25,10 @@ def get_args(pred_config):
 
 def load_model(pred_config, args, device):
     # Check whether model exists
-    # torch.load(training.bins)를 해서 학습할 당시 저장했던 model_dir를 찾도록 되어 있음
-    # 이런 방식은 학습 이후 model 디렉토리 이름을 변경할 시 자꾸 path를 찾지 못하는 문제가 있음.
-    # 그래서 pred_config.model_dir로 찾도록 한다.
     if not os.path.exists(pred_config.model_dir):
         raise Exception("Model doesn't exists! Train first!")
 
     try:
-        # model = AutoModelForTokenClassification.from_pretrained(args.model_dir)  # Config will be automatically loaded from model_dir
         model = AutoModelForTokenClassification.from_pretrained(pred_config.model_dir)  # Config will be automatically loaded from model_dir
         model.to(device)
         model.eval()
@@ -51,7 +48,6 @@ def read_input_file(pred_config):
             lines.append(words)
 
     return lines
-
 
 def convert_input_file_to_tensor_dataset(lines,
                                          pred_config,
@@ -83,20 +79,11 @@ def convert_input_file_to_tensor_dataset(lines,
                 word_tokens = [unk_token]  # For handling the bad-encoded word
             tokens.extend(word_tokens)
             
-            # Use the real label id for the first token of the word, and padding ids for the remaining tokens
-            # slot_label_mask.extend([0] + [pad_token_label_id] * (len(word_tokens) - 1))
-            
             # use the real label id for all tokens of the word
             slot_label_mask.extend([0] * (len(word_tokens)))
 
-        # print(tokens)
-        all_input_tokens.append(tokens) # 뭐지? 여기서는 뒤에 sep 안 붙는데 이 이후부터 계속 붙네?
-        # append를 여기서 하는데 왜지??? 
-        # print("=====================")
-        # print(all_input_tokens)
-        # 어차피 input_tokens 뒤에 SEP가 붙어서 +1이더라도 preds_list는 그거보다 1개 작으니까 (SEP 없음) 상관은 없는데
-        # 뭐임??
-        
+        all_input_tokens.append(tokens)
+
         # Account for [CLS] and [SEP]
         special_tokens_count = 2
         if len(tokens) > args.max_seq_len - special_tokens_count:
@@ -108,16 +95,10 @@ def convert_input_file_to_tensor_dataset(lines,
         token_type_ids = [sequence_a_segment_id] * len(tokens)
         slot_label_mask += [pad_token_label_id]
 
-        # print("=====================")
-        # print(all_input_tokens)
-
         # Add [CLS] token
         tokens = [cls_token] + tokens
         token_type_ids = [cls_token_segment_id] + token_type_ids
         slot_label_mask = [pad_token_label_id] + slot_label_mask
-
-        # print("=====================")
-        # print(all_input_tokens)
 
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
@@ -182,9 +163,6 @@ def predict(pred_config):
       lines = read_input_file(pred_config)
       dataset, all_input_tokens = convert_input_file_to_tensor_dataset(lines, pred_config, args, tokenizer, pad_token_label_id)
 
-      # print(all_input_tokens)
-      # quit()
-
       # Predict
       sampler = SequentialSampler(dataset)
       data_loader = DataLoader(dataset, sampler=sampler, batch_size=pred_config.batch_size)
@@ -204,17 +182,11 @@ def predict(pred_config):
 
               outputs = model(**inputs)
 
-              # print(len(outputs)) # 1
+              logits = outputs[0] 
 
-              logits = outputs[0] # loss? 
-              # print(logits.size()) # 3, 50, 28 (B, S, num_classes)
-              # print(logits.detach().cpu().numpy())
-
-              # logits = linear output
               sm = torch.nn.functional.softmax(logits, dim=-1)
               sm = sm.detach().cpu().numpy()
-              # print(sm)
-              # print(sm.size()) # 3, 50, 28
+
 
               if preds is None: # the very first one 
                   preds = logits.detach().cpu().numpy()
@@ -235,78 +207,95 @@ def predict(pred_config):
 
       for i in range(preds.shape[0]):
           for j in range(preds.shape[1]):
-              if all_slot_label_mask[i, j] != pad_token_label_id: # 일단 이 부분에서 뽑지 않으면 other도 해당되는 것 
+              if all_slot_label_mask[i, j] != pad_token_label_id:
                   preds_list[i].append(slot_label_map[preds[i][j]])
                   sms_list[i].append(sms[i][j])
-
-      ######### 정답 후보 태그 3개까지 출력 
-      sen_list = []
-      for k in range(len(sms_list)):
-
-        temp = sms_list[k] #19 (Number of tokens)
-
-        # print(temp)
-        # print(len(temp))
-        # print("=======================")
-        
-        for tidx in range(len(temp)):
-          
-          tok_candidates = {}
-          
-          real_tok = all_input_tokens[k][tidx]
-          tok = temp[tidx]
-          ranked = np.argsort(tok)
-          largest_indices = ranked[::-1][:3]
-
-          # print("rank for", real_tok, " started")
-
-          candids = {}
-          for i in range(len(largest_indices)):
-            idx = largest_indices[i]
-            # # print(idx)
-            # print(slot_label_map[idx], ": ", tok[idx])
-
-            # 그냥 한 번에 볼 수 있게끔 수정 
-            candids[i] = (slot_label_map[idx], tok[idx])
                   
-          tok_candidates[real_tok] = [candids]
-          sen_list.append(tok_candidates)
+    
+    result_dict = {}
+    result_dict['result'] = []
+    
+    for words, preds in zip(all_input_tokens, preds_list):
+        
+            pii_started = 0
+        
+            # words가 문장 단위
+            
+            line = ""
+            
+            ahead_tag = ""
+            pii_word = ""
+            
+            final_idx = (len(preds) if len(words) > len(preds) else len(words))-1
+            
+            for i, (word, pred) in enumerate(zip(words, preds)):
+                
+                pred = pred.split("-")[0] # BIO tag 제거
+                
+                if i == 0:
+                    ahead_tag = pred
+                    
+            
+                if '#' in word:
 
-          # print("rank for", real_tok, " ended\n\n")
+                    pii_ended = words.find(word)
+                    
+                    
+                    word = word.strip('#')
+                    
+                    if pred == ahead_tag:
+                        pii_word += word
+                        
+                    else: 
+                        if ahead_tag == 'O':
+                            line += pii_word
+                        else:
+                            
+                            line = line + "[{}:{}] ".format(pii_word, ahead_tag)
 
-      for i in range(len(sen_list)):
-        print(sen_list[i])
+                            result_dict['result'].append({
+                                "token":pii_word,
+                                "tag":ahead_tag,
+                                "start":0,
+                                "end":0,
+                            })
+                            
+                        pii_word = word
+                        
+                else:
+                    if pred == ahead_tag:
+                        # pii_started =
+                        pii_word = pii_word + " " + word
 
-      # output file 경로가 따로 주어지지 않은 경우는 이렇게 
-      if pred_config.output_file == None:
-        ### modify output directory
-        root = './sample_pred_out'
-        model_dir = pred_config.model_dir.split('/')[-1]
-
-        #### join()은 디렉토리의 구분 문자 (/, \\)가 들어 있으면 그것을 root로 본다
-        save_dir = os.path.join(root, model_dir)
-        save_fn = pred_config.input_file.split("/")[-1]
-
-        if not os.path.exists(save_dir):
-          os.makedirs(save_dir)
-
-        pred_config.output_file = os.path.join(save_dir, save_fn)
-
-      # Write to output file
-      with open(pred_config.output_file, "w", encoding="utf-8") as f:
-          for words, preds in zip(all_input_tokens, preds_list):
-              line = ""
-              for word, pred in zip(words, preds):
-                  if pred == 'O':
-                      line = line + word + " "
-                  else:
-                      line = line + "[{}:{}] ".format(word, pred)
-
-              f.write("{}\n".format(line.strip()))
-
-          pred_config.output_file = None
+                    else:
+                        if ahead_tag == 'O':
+                            line += pii_word
+                        else:
+                            line = line + "[{}:{}] ".format(pii_word, ahead_tag)
+                            
+                            result_dict['result'].append({
+                                "token":pii_word,
+                                "tag":ahead_tag,
+                                "start":0,
+                                "end":0,
+                            })
+                            
+                        pii_word = word
+                        
+                ahead_tag = pred
+                
+                if i == final_idx:
+                    if pred == 'O':
+                        line += pii_word
+                    else:
+                        line = line + "[{}:{}] ".format(pii_word, ahead_tag)
 
     logger.info("Prediction Done!")
+    
+    # 한글 깨짐 
+    result_json = json.dumps(result_dict, indent="\t", ensure_ascii=False)
+    
+    return result_json
 
 # added for server
 def main(user_txt_path):
@@ -323,7 +312,7 @@ def main(user_txt_path):
 
     parser.add_argument("--input_file", default=None, type=str, help="Input file for prediction")
     parser.add_argument("--output_file", default=None, type=str, help="Output file for prediction")
-    parser.add_argument("--model_dir", default="./model", type=str, help="Path to save, load model")
+    parser.add_argument("--model_dir", default="flask_deep\model", type=str, help="Path to save, load model")
 
     parser.add_argument("--batch_size", default=32, type=int, help="Batch size for prediction")
     parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
@@ -332,22 +321,12 @@ def main(user_txt_path):
     
     pred_config.input_file = user_txt_path
     
-    predict(pred_config)
+    result_dict = predict(pred_config)
+    
+    return result_dict
     
 
 
 if __name__ == "__main__":
     
-    # init_logger()
-    # parser = argparse.ArgumentParser()
-
-    # parser.add_argument("--input_file", default=None, type=str, help="Input file for prediction")
-    # parser.add_argument("--output_file", default=None, type=str, help="Output file for prediction")
-    # parser.add_argument("--model_dir", default="./model", type=str, help="Path to save, load model")
-
-    # parser.add_argument("--batch_size", default=32, type=int, help="Batch size for prediction")
-    # parser.add_argument("--no_cuda", action="store_true", help="Avoid using CUDA when available")
-    
-    # pred_config = parser.parse_args()
-    # predict(pred_config)
     pass

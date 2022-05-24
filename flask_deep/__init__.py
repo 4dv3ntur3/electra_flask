@@ -9,15 +9,17 @@ render_template: 해당 경로를 웹 브라우저로 전달한다
 
 '''
 
-
 import os, sys
+from re import A
 from flask import Flask, escape, request,  Response, g, make_response
+from flask import jsonify
 from flask.templating import render_template
 from werkzeug import secure_filename # WSGI 
 from . import electra_infer
+import json 
  
 app = Flask(__name__)
-app.debug = True
+app.debug = True # 코드 수정 시 바로바로 디버깅 
  
 # Main page
 @app.route('/')
@@ -26,7 +28,32 @@ def index():
  
 @app.route('/nst_get')
 def nst_get():
+    
+    
+    
     return render_template('nst_get.html')
+
+
+'''
+input: jsonified input text
+output: result json 
+'''
+
+# @app.route('/nst_post', methods=['GET','POST'])
+# def nst_post():
+    
+#     if request.method == 'POST':
+        
+#         data = request.form['input_txt']
+
+#         '''
+#         json으로 들어온 입력 처리 
+#         '''
+#         # print(request.is_json)
+#         # parmas = request.get_json()
+
+#     # input, predict 결과 전송 
+#     return render_template('nst_post.html', result_txt=data)
  
 @app.route('/nst_post', methods=['GET','POST'])
 def nst_post():
@@ -37,13 +64,10 @@ def nst_post():
          
         user_txt = request.files['input_txt']
         user_txt.save('./flask_deep/static/images/'+str(user_txt.filename))
-        user_txt_path = './static/images/'+str(user_txt.filename)
+        user_txt_path = './flask_deep/static/images/'+str(user_txt.filename)
  
         # predict code 호출 
-        # 
         result_txt = electra_infer.main(user_txt_path) #return 하게 해야겠네 
-        result_txt_path = './static/images/'+str(result_txt.split('/')[-1])
  
     # input, predict 결과 전송 
-    return render_template('nst_post.html', 
-                           user_txt=user_txt_path, result_txt=result_txt_path)
+    return render_template('nst_post.html', result_txt=result_txt)
