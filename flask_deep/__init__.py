@@ -1,49 +1,85 @@
-'''
-
-flask app 실행을 위한 파일
-flask 파라미터로 전달되는 __name__ 파라미터 : flask app을 구분하기 위한 구분자로 사용
-app.debug = True : 코드 수정 시 바로바로 디버깅 가능
-
-@app.route: 페이지 URL과 함수를 연결 (그 페이지에서 들어온 입력을 중개)
-render_template: 해당 경로를 웹 브라우저로 전달한다
-
-'''
-
-
 import os, sys
-from flask import Flask, escape, request,  Response, g, make_response
-from flask.templating import render_template
-from werkzeug import secure_filename # WSGI 
+from flask import Flask, request,  Response
+# from werkzeug import secure_filename # WSGI 
+from werkzeug.utils import secure_filename
 from . import electra_infer
- 
+import json 
+import torch
+import configparser
+
+# for load model
+from transformers import AutoModelForTokenClassification, ElectraTokenizer
+
 app = Flask(__name__)
 app.debug = True
- 
-# Main page
-@app.route('/')
-def index():
-    return render_template('index.html')
- 
-@app.route('/nst_get')
-def nst_get():
-    return render_template('nst_get.html')
- 
-@app.route('/nst_post', methods=['GET','POST'])
-def nst_post():
+
+model_dict = None
+
+
+def config_read():
+
+    config = configparser.ConfigParser()
+    config.read('config.ini', encoding='utf-8')
+
+    return config['model']['model_dir']
+
+
+
+# 최초 request 직전에만 수행
+@app.before_first_request
+def before_first_request():
+
+    cwd = os.getcwd() # 이 부분 config로 수정할 수 있도록 (현재 working directory 기준으로 잡힘 )
+
+    model_dir = config_read()
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    training_params = torch.load(os.path.join(model_dir, 'training_parameters.bin'))
+
+    tokenizer = ElectraTokenizer.from_pretrained(training_params['training_args'].model_name_or_path)
+
+    # Check whether model exists
+    if not os.path.exists(model_dir):
+        raise Exception("Model doesn't exists! Train first!")
+
+    try:
+        model = AutoModelForTokenClassification.from_pretrained(model_dir)  # Config will be automatically loaded from model_dir
+        model.to(device)
+        model.eval()
+        print("***** Model Loaded *****")
+
+    except:
+        raise Exception("Some model files might be missing...")
+
+    
+    model_dict_temp = {
+        'model': model,
+        'model_dir': model_dir,
+        'device': device,
+        'training_params': training_params,
+        'tokenizer': tokenizer
+    }
+
+    global model_dict
+    model_dict = model_dict_temp
+
+@app.route('/predict', methods=['GET','POST'])
+def predict():
+
+    global model_dict
+    if model_dict is None:
+        print("something is wrong... check model... ")
+        
+
     if request.method == 'POST':
-        # User Image (target image)
-        # form태그에서 input type="file"로 넘어오면 .save, .filename 등의 멤버 변수(?)가 자동으로 생기는 듯
-        # model_dir, input_txt_dir : json
-         
-        user_txt = request.files['input_txt']
-        user_txt.save('./flask_deep/static/images/'+str(user_txt.filename))
-        user_txt_path = './static/images/'+str(user_txt.filename)
+
+        input_txt = request.json['text']
+
+        result_txt = electra_infer.main(input_txt, model_dict)
+
+    elif request.method == 'GET':
+        # 이 부분은 request parameter로 받아오는 부분... 수정 필요?
+        pass
  
-        # predict code 호출 
-        # 
-        result_txt = electra_infer.main(user_txt_path) #return 하게 해야겠네 
-        result_txt_path = './static/images/'+str(result_txt.split('/')[-1])
- 
-    # input, predict 결과 전송 
-    return render_template('nst_post.html', 
-                           user_txt=user_txt_path, result_txt=result_txt_path)
+    return Response(result_txt, mimetype="application/json", status=200)

@@ -131,3 +131,9 @@ dmypy.json
 
 # Deep Learning Model directory
 model/
+
+# venv
+flask/
+
+# vscode setting directory
+.vscode/
