@@ -6,12 +6,16 @@ from tqdm import tqdm, trange
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
-from flask_deep.utils import init_logger
 
 import glob
 import json 
 
 logger = logging.getLogger(__name__)
+
+def init_logger():
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S',
+                        level=logging.INFO)
 
 def read_input_file(pred_config):
 

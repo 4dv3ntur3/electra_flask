@@ -2,8 +2,7 @@ import os, sys
 from flask import Flask, request,  Response
 # from werkzeug import secure_filename # WSGI 
 from werkzeug.utils import secure_filename
-from . import electra_infer
-import json 
+import electra_infer # from . import electra_infer 이런 거 할 필요 없음 (같은 디렉토리 내)
 import torch
 import configparser
 
@@ -83,3 +82,8 @@ def predict():
         pass
  
     return Response(result_txt, mimetype="application/json", status=200)
+
+
+if __name__ == "__main__":
+    app.run(host='127.0.0.1')
+
