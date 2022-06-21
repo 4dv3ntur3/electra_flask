@@ -132,6 +132,8 @@ def predict_server(pred_config):
     tokenizer = pred_config.tokenizer
 
     lines = read_input_file(pred_config)
+    input_origin = pred_config.input_txt.split('\n')
+
     dataset, all_input_tokens = convert_input_file_to_tensor_dataset(lines, args, tokenizer, pad_token_label_id)
 
     # Predict
@@ -150,6 +152,9 @@ def predict_server(pred_config):
                     "labels": None} # label이 None이므로 
             if args.model_type != "distilkobert":
                 inputs["token_type_ids"] = batch[2]
+
+
+            
 
             outputs = model(**inputs)
 
@@ -184,11 +189,13 @@ def predict_server(pred_config):
     
     result_dict = {}
     result_dict['result'] = []
-    
-    for words, preds in zip(all_input_tokens, preds_list):
+
+    # print(all_input_tokens[0]) # sentence 1 
+
+    for words, preds, origin in zip(all_input_tokens, preds_list, input_origin):
         
             # words가 문장 단위
-            
+
             line = ""
             
             ahead_tag = ""
@@ -206,8 +213,6 @@ def predict_server(pred_config):
             
                 if '#' in word:
 
-                    pii_ended = words.index(word) #list 
-
                     word = word.strip('#')
                     
                     if pred == ahead_tag:
@@ -220,25 +225,31 @@ def predict_server(pred_config):
                             
                             line = line + "[{}:{}] ".format(pii_word, ahead_tag)
 
+                            start_idx = origin.find(pii_word[:1])
+                            end_idx = start_idx + len(pii_word) - 1
+
                             result_dict['result'].append({
                                 "token":pii_word.strip(),
                                 "tag":ahead_tag,
-                                "start":0,
-                                "end":0,
+                                "start":start_idx,
+                                "end":end_idx,
                             })
                             
                         pii_word = word
                         
                 else:
                     if pred == ahead_tag:
-                        # pii_started =
                         pii_word = pii_word + " " + word
 
                     else:
                         if ahead_tag == 'O':
                             line += pii_word
                         else:
+                            
                             line = line + "[{}:{}] ".format(pii_word, ahead_tag)
+
+                            start_idx = origin.find(pii_word[:1])
+                            end_idx = start_idx + len(pii_word) -1
                             
                             result_dict['result'].append({
                                 "token":pii_word.strip(),

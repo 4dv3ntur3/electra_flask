@@ -28,8 +28,6 @@ def config_read():
 @app.before_first_request
 def before_first_request():
 
-    cwd = os.getcwd() # 이 부분 config로 수정할 수 있도록 (현재 working directory 기준으로 잡힘 )
-
     model_dir = config_read()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -70,7 +68,6 @@ def predict():
     if model_dict is None:
         print("something is wrong... check model... ")
         
-
     if request.method == 'POST':
 
         input_txt = request.json['text']
